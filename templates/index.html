@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hardware Serial Collector</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Hardware Serial Collector</h1>
+            <p>Connect to servers via IPMI/SSH and collect hardware information</p>
+        </header>
+
+        <div class="main-layout">
+            <!-- LEFT PANEL - Connection Inputs -->
+            <div class="connections-panel">
+                <div class="panel-header">
+                    <h2>Server Connections</h2>
+                </div>
+                
+                <div class="card">
+                    <form id="collectForm">
+                        <!-- IPMI Connection Section -->
+                        <div class="form-section ipmi-section">
+                            <h3>IPMI Connection <span class="optional">(Optional)</span></h3>
+                            <div class="form-group">
+                                <label for="ipmi_host">IPMI Host/IP:</label>
+                                <input type="text" id="ipmi_host" name="ipmi_host" placeholder="192.168.1.100">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="ipmi_user">Username:</label>
+                                    <input type="text" id="ipmi_user" name="ipmi_user" placeholder="admin">
+                                </div>
+                                <div class="form-group">
+                                    <label for="ipmi_pass">Password:</label>
+                                    <input type="password" id="ipmi_pass" name="ipmi_pass" placeholder="password">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- SSH Connection Section -->
+                        <div class="form-section ssh-section">
+                            <h3>SSH Connection <span class="required">(Required)</span></h3>
+                            <div class="form-group">
+                                <label for="ssh_host">SSH Host/IP:</label>
+                                <input type="text" id="ssh_host" name="ssh_host" placeholder="192.168.1.100" required>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="ssh_user">Username:</label>
+                                    <input type="text" id="ssh_user" name="ssh_user" placeholder="root" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="ssh_pass">Password:</label>
+                                    <input type="password" id="ssh_pass" name="ssh_pass" placeholder="password" required>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="ssh_port">SSH Port:</label>
+                                <input type="number" id="ssh_port" name="ssh_port" value="22" min="1" max="65535">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn-primary" id="collectBtn">
+                            Collect Hardware Info
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL - Results Display -->
+            <div class="results-panel">
+                <div class="panel-header">
+                    <h2>Hardware Results</h2>
+                </div>
+
+                <div id="loadingDiv" class="loading hidden">
+                    <div class="card">
+                        <div class="spinner"></div>
+                        <p>Connecting and collecting hardware information...</p>
+                    </div>
+                </div>
+
+                <div id="resultsDiv" class="results hidden">
+                    <div class="card">
+                        <div id="resultsContent"></div>
+                    </div>
+                </div>
+
+                <div id="placeholderDiv" class="placeholder">
+                    <div class="card">
+                        <div class="placeholder-content">
+                            <h3>Ready to Collect</h3>
+                            <p>Fill in the server connection details on the left and click <strong>"Collect Hardware Info"</strong> to see hardware serial numbers and system information here.</p>
+                            <div class="placeholder-steps">
+                                <div class="step">1. Enter SSH connection details (required)</div>
+                                <div class="step">2. Optionally add IPMI credentials</div>  
+                                <div class="step">3. Click the collect button</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('collectForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const data = Object.fromEntries(formData);
+            
+            // Show loading
+            document.getElementById('loadingDiv').classList.remove('hidden');
+            document.getElementById('resultsDiv').classList.add('hidden');
+            document.getElementById('placeholderDiv').classList.add('hidden');
+            document.getElementById('collectBtn').disabled = true;
+            
+            try {
+                const response = await fetch('/collect', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const results = await response.json();
+                displayResults(results);
+                
+            } catch (error) {
+                displayError('Connection failed: ' + error.message);
+            } finally {
+                document.getElementById('loadingDiv').classList.add('hidden');
+                document.getElementById('collectBtn').disabled = false;
+            }
+        });
+        
+        function displayResults(results) {
+            const resultsContent = document.getElementById('resultsContent');
+            let html = `<div class="timestamp">Collection completed at: ${results.timestamp}</div>`;
+            
+            // IPMI Results
+            if (results.ipmi && Object.keys(results.ipmi).length > 0) {
+                html += '<div class="result-section">';
+                html += '<h4>IPMI Status</h4>';
+                if (results.ipmi.status === 'success') {
+                    html += '<div class="status success">✓ Connected</div>';
+                    html += `<pre class="output">${results.ipmi.data}</pre>`;
+                } else {
+                    html += '<div class="status error">✗ Failed</div>';
+                    html += `<div class="error-message">${results.ipmi.message}</div>`;
+                }
+                html += '</div>';
+            }
+            
+            // Hardware Results
+            html += '<div class="result-section">';
+            html += '<h4>Hardware Information</h4>';
+            if (results.hardware.status === 'success') {
+                html += '<div class="status success">✓ Collection Successful</div>';
+                html += formatHardwareOutput(results.hardware.data);
+            } else {
+                html += '<div class="status error">✗ Collection Failed</div>';
+                html += `<div class="error-message">${results.hardware.message}</div>`;
+            }
+            html += '</div>';
+            
+            resultsContent.innerHTML = html;
+            document.getElementById('resultsDiv').classList.remove('hidden');
+            document.getElementById('placeholderDiv').classList.add('hidden');
+        }
+        
+        function formatHardwareOutput(data) {
+            // Parse the hardware data and format it nicely
+            const lines = data.split('\n');
+            let formattedOutput = '<div class="hardware-output">';
+            let currentSection = '';
+            
+            lines.forEach(line => {
+                line = line.trim();
+                if (line.includes('===')) {
+                    const sectionTitle = line.replace(/=/g, '').trim();
+                    if (sectionTitle && !sectionTitle.includes('COMPLETE')) {
+                        formattedOutput += `<h5>${sectionTitle}</h5>`;
+                        currentSection = sectionTitle;
+                    }
+                } else if (line.endsWith(':') && line.length < 20) {
+                    formattedOutput += `<h6>${line}</h6>`;
+                } else if (line && !line.startsWith('=')) {
+                    formattedOutput += `<div class="hardware-item">${line}</div>`;
+                }
+            });
+            
+            formattedOutput += '</div>';
+            return formattedOutput;
+        }
+        
+        function displayError(message) {
+            const resultsContent = document.getElementById('resultsContent');
+            resultsContent.innerHTML = `
+                <div class="result-section">
+                    <div class="status error">✗ Error</div>
+                    <div class="error-message">${message}</div>
+                </div>
+            `;
+            document.getElementById('resultsDiv').classList.remove('hidden');
+            document.getElementById('placeholderDiv').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
